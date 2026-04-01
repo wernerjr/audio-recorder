@@ -123,8 +123,11 @@ class MainWindow(QMainWindow):
         title.setFont(QFont("Segoe UI", 15, QFont.Weight.Bold))
         settings_btn = QPushButton("⚙  Configurações")
         settings_btn.clicked.connect(self._open_settings)
+        history_btn = QPushButton("🕑  Histórico")
+        history_btn.clicked.connect(self._open_history)
         header.addWidget(title)
         header.addStretch()
+        header.addWidget(history_btn)
         header.addWidget(settings_btn)
         root.addLayout(header)
 
@@ -261,6 +264,16 @@ class MainWindow(QMainWindow):
         win = SettingsWindow(self._settings, parent=self)
         if win.exec():
             self._settings = win.get_settings()
+
+    def _open_history(self) -> None:
+        from pathlib import Path
+        from .history_window import HistoryWindow
+        db_path = (
+            Path(self._settings.output.db_path)
+            if self._settings.output.db_path
+            else Path(self._settings.output.directory) / "history.db"
+        )
+        HistoryWindow(db_path, parent=self).exec()
 
     def _load_settings(self) -> Settings:
         config_path = _CONFIG_PATH if _CONFIG_PATH.exists() else None

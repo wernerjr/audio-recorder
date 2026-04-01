@@ -11,6 +11,7 @@ from ..capture.factory import get_loopback_capturer, get_mic_capturer
 from ..config.settings import Settings
 from ..merge.formatter import write_all
 from ..merge.merger import Merger, MergedSegment
+from ..persistence.database import get_db, save_session
 from ..transcription.segment import AudioSegment, TranscriptResult
 from ..vad.silero import VADWorker
 from ..transcription.pipeline import TranscriptionWorker
@@ -45,6 +46,7 @@ class RecordingSession:
         self._stop_event = threading.Event()
         self._capturers: list[AudioCapturer] = []
         self._workers: list[threading.Thread] = []
+        self._started_at: str = ""
 
     # ------------------------------------------------------------------
     # Public API
@@ -55,6 +57,7 @@ class RecordingSession:
             raise RuntimeError(f"Sessão já iniciada (estado: {self.state})")
 
         self._output_dir.mkdir(parents=True, exist_ok=True)
+        self._started_at = datetime.now().isoformat()
         cfg = AudioConfig(chunk_size=1024)
         t = self._settings.transcription
 
@@ -118,6 +121,20 @@ class RecordingSession:
 
         for path in created:
             logger.info("Arquivo gerado: %s", path)
+
+        # Persist to SQLite history
+        db_path = (
+            Path(self._settings.output.db_path)
+            if self._settings.output.db_path
+            else Path(self._settings.output.directory) / "history.db"
+        )
+        try:
+            db = get_db(db_path)
+            save_session(db, self._output_dir, self._started_at, datetime.now().isoformat(), segments)
+            db.close()
+            logger.info("Sessão salva no histórico: %s", db_path)
+        except Exception:
+            logger.exception("Falha ao salvar sessão no histórico SQLite.")
 
         return created
 

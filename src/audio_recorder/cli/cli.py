@@ -244,6 +244,107 @@ def transcribe(
 
 
 @app.command()
+def history(
+    config: Annotated[
+        Optional[Path],
+        typer.Option("--config", "-c", help="Caminho para config.toml"),
+    ] = None,
+) -> None:
+    """Lista sessões gravadas no histórico."""
+    from ..config.settings import load_settings
+    from ..persistence.database import get_db, list_sessions
+
+    config_path = config or (_DEFAULT_CONFIG if _DEFAULT_CONFIG.exists() else None)
+    settings = load_settings(config_path)
+    db_path = (
+        Path(settings.output.db_path)
+        if settings.output.db_path
+        else Path(settings.output.directory) / "history.db"
+    )
+
+    if not db_path.exists():
+        typer.echo("Nenhum histórico encontrado.")
+        return
+
+    db = get_db(db_path)
+    try:
+        sessions = list_sessions(db)
+    finally:
+        db.close()
+
+    if not sessions:
+        typer.echo("Nenhuma sessão gravada.")
+        return
+
+    typer.echo(f"\n{'ID':>4}  {'Data/Hora':<20}  {'Duração':>8}  {'Seg.':>5}  Diretório")
+    typer.echo("-" * 72)
+    for s in sessions:
+        duration = s.get("duration_s") or 0.0
+        mins, secs = divmod(int(duration), 60)
+        started = s["started_at"].replace("T", " ")[:16]
+        typer.echo(
+            f"{s['id']:>4}  {started:<20}  {mins:02d}:{secs:02d}     "
+            f"{s['segment_count']:>5}  {s['output_dir']}"
+        )
+    typer.echo()
+
+
+@app.command()
+def show(
+    session_id: Annotated[int, typer.Argument(help="ID da sessão (ver 'history')")],
+    search: Annotated[
+        Optional[str],
+        typer.Option("--search", "-s", help="Filtrar segmentos por texto"),
+    ] = None,
+    config: Annotated[
+        Optional[Path],
+        typer.Option("--config", "-c", help="Caminho para config.toml"),
+    ] = None,
+) -> None:
+    """Exibe a transcrição de uma sessão gravada."""
+    from ..config.settings import load_settings
+    from ..persistence.database import get_db, get_segments, search_segments
+    from ..utils.timestamp import format_ts
+
+    config_path = config or (_DEFAULT_CONFIG if _DEFAULT_CONFIG.exists() else None)
+    settings = load_settings(config_path)
+    db_path = (
+        Path(settings.output.db_path)
+        if settings.output.db_path
+        else Path(settings.output.directory) / "history.db"
+    )
+
+    if not db_path.exists():
+        typer.secho("Histórico não encontrado.", fg=typer.colors.RED, err=True)
+        raise typer.Exit(1)
+
+    db = get_db(db_path)
+    try:
+        if search:
+            rows = [
+                r for r in search_segments(db, search)
+                if r["session_id"] == session_id
+            ]
+        else:
+            rows = get_segments(db, session_id)
+    finally:
+        db.close()
+
+    if not rows:
+        typer.echo("Nenhum segmento encontrado.")
+        return
+
+    typer.echo()
+    for r in rows:
+        ts = format_ts(r["start"])
+        label = r["source"].upper()
+        if r.get("speaker"):
+            label += f"/{r['speaker']}"
+        typer.echo(f"  [{ts}] [{label}] {r['text']}")
+    typer.echo()
+
+
+@app.command()
 def devices() -> None:
     """Lista microfones e dispositivos de loopback disponíveis."""
     from ..capture.factory import list_devices

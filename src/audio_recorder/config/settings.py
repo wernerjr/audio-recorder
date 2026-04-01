@@ -30,6 +30,7 @@ class TranscriptionSettings:
 class OutputSettings:
     directory: str = "recordings"
     formats: list[str] = field(default_factory=lambda: ["txt", "srt"])
+    db_path: str = ""  # caminho do history.db; vazio → <output_dir>/../history.db
 
 
 @dataclass
