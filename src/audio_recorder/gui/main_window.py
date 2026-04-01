@@ -54,9 +54,9 @@ class _StopWorker(QThread):
                     break
 
             diar_segments = None
-            if self._diar.enabled and self._diar.token:
+            if self._diar.enabled:
                 from ..diarization.engine import DiarizationEngine
-                engine = DiarizationEngine(self._diar.token)
+                engine = DiarizationEngine()
                 mic_wav = self._session._output_dir / "microfone.wav"
                 if mic_wav.exists():
                     diar_segments = engine.diarize(mic_wav)

@@ -93,8 +93,5 @@ def _validate(s: Settings) -> None:
             f"Válidos: {sorted(VALID_MODELS)}"
         )
 
-    if s.diarization.enabled and not s.diarization.token:
-        logger.warning(
-            "Diarização ativada mas token HuggingFace não configurado. "
-            "Defina 'diarization.token' no config.toml ou HUGGINGFACE_TOKEN."
-        )
+    if s.diarization.enabled:
+        logger.debug("Diarização ativada com modelo público freevoid/speaker-diarization-3.1.")

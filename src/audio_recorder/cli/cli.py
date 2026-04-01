@@ -140,11 +140,11 @@ def record(
 
     # Optional diarization
     diarization_segments = None
-    if settings.diarization.enabled and settings.diarization.token:
+    if settings.diarization.enabled:
         if not quiet:
             typer.echo("Executando diarização...")
         try:
-            engine = DiarizationEngine(settings.diarization.token)
+            engine = DiarizationEngine()
             mic_wav = output_dir / "microfone.wav"
             if mic_wav.exists():
                 diarization_segments = engine.diarize(mic_wav)

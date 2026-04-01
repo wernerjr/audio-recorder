@@ -15,27 +15,16 @@ class DiarizationEngine:
     """
     Wraps pyannote-audio speaker diarization pipeline.
 
-    Requires a HuggingFace token with access to:
-      pyannote/speaker-diarization-3.1
-
-    Accept the model conditions at:
-      https://huggingface.co/pyannote/speaker-diarization-3.1
+    Uses the free public model freevoid/speaker-diarization-3.1 — no token required.
 
     Usage:
-        engine = DiarizationEngine(token="hf_...")
+        engine = DiarizationEngine()
         segments = engine.diarize(Path("microfone.wav"))
     """
 
-    MODEL_ID = "pyannote/speaker-diarization-3.1"
+    MODEL_ID = "freevoid/speaker-diarization-3.1"
 
-    def __init__(self, token: str) -> None:
-        if not token:
-            raise ValueError(
-                "Token HuggingFace obrigatório para diarização. "
-                "Defina 'diarization.token' no config.toml ou a variável "
-                "de ambiente HUGGINGFACE_TOKEN."
-            )
-        self._token = token
+    def __init__(self, token: str = "") -> None:
         self._pipeline = None  # lazy load
 
     def _load(self) -> None:
@@ -43,10 +32,7 @@ class DiarizationEngine:
             return
         from pyannote.audio import Pipeline
 
-        self._pipeline = Pipeline.from_pretrained(
-            self.MODEL_ID,
-            use_auth_token=self._token,
-        )
+        self._pipeline = Pipeline.from_pretrained(self.MODEL_ID)
 
     def diarize(self, audio_path: Path) -> list[DiarizationSegment]:
         """Run diarization on a WAV file and return speaker segments."""

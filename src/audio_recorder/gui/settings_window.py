@@ -55,7 +55,6 @@ class SettingsWindow(QDialog):
         s.transcription.language = self._lang.currentData() or "auto"
         s.output.directory = self._out_dir.text().strip() or "recordings"
         s.diarization.enabled = self._diar_enabled.isChecked()
-        s.diarization.token = self._hf_token.text().strip()
         return s
 
     # ------------------------------------------------------------------
@@ -97,14 +96,10 @@ class SettingsWindow(QDialog):
         self._diar_enabled = QCheckBox("Ativar diarização")
         diar_form.addRow(self._diar_enabled)
 
-        self._hf_token = QLineEdit()
-        self._hf_token.setEchoMode(QLineEdit.EchoMode.Password)
-        self._hf_token.setPlaceholderText("hf_…")
-        diar_form.addRow("Token HuggingFace:", self._hf_token)
-
         note = QLabel(
-            '<a href="https://huggingface.co/pyannote/speaker-diarization-3.1">'
-            "Aceite os termos do modelo antes de usar.</a>"
+            'Usa o modelo público '
+            '<a href="https://huggingface.co/freevoid/speaker-diarization-3.1">'
+            "freevoid/speaker-diarization-3.1</a> — sem token necessário."
         )
         note.setOpenExternalLinks(True)
         note.setWordWrap(True)
@@ -128,4 +123,3 @@ class SettingsWindow(QDialog):
         self._lang.setCurrentIndex(lang_idx)
         self._out_dir.setText(s.output.directory)
         self._diar_enabled.setChecked(s.diarization.enabled)
-        self._hf_token.setText(s.diarization.token)
