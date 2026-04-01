@@ -6,7 +6,7 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
-from ..capture.base import AudioChunk, AudioConfig
+from ..capture.base import AudioCapturer, AudioChunk, AudioConfig
 from ..capture.factory import get_loopback_capturer, get_mic_capturer
 from ..config.settings import Settings
 from ..merge.formatter import write_all
@@ -43,6 +43,7 @@ class RecordingSession:
         self.state = SessionState.IDLE
         self.result_queue: queue.Queue[TranscriptResult] = queue.Queue()
         self._stop_event = threading.Event()
+        self._capturers: list[AudioCapturer] = []
         self._workers: list[threading.Thread] = []
 
     # ------------------------------------------------------------------
@@ -57,16 +58,21 @@ class RecordingSession:
         cfg = AudioConfig(chunk_size=1024)
         t = self._settings.transcription
 
-        self._workers = [
-            *self._build_channel("mic", cfg, t.model, t.language,
-                                 self._output_dir / "microfone.wav",
-                                 device_name=self._settings.capture.mic_device_name),
-            *self._build_channel("system", cfg, t.model, t.language,
-                                 self._output_dir / "sistema.wav"),
-        ]
+        for source, wav_name, kwargs in [
+            ("mic",    "microfone.wav", {"device_name": self._settings.capture.mic_device_name}),
+            ("system", "sistema.wav",   {}),
+        ]:
+            capturer, workers = self._build_channel(
+                source, cfg, t.model, t.language,
+                self._output_dir / wav_name, **kwargs,
+            )
+            self._capturers.append(capturer)
+            self._workers.extend(workers)
 
         for w in self._workers:
             w.start()
+        for c in self._capturers:
+            c.start()
 
         self.state = SessionState.RECORDING
         logger.info("Gravação iniciada → %s", self._output_dir)
@@ -77,8 +83,15 @@ class RecordingSession:
 
         self.state = SessionState.TRANSCRIBING
         logger.info("Parando gravação, aguardando workers...")
+
+        # 1. Stop capturers first — cuts off data flow into the queues
+        for c in self._capturers:
+            c.stop()
+
+        # 2. Signal the remaining workers (WavWriter, VADWorker, TranscriptionWorker)
         self._stop_event.set()
 
+        # 3. Wait for workers to drain their queues
         for w in self._workers:
             w.join(timeout=60)
             if w.is_alive():
@@ -120,7 +133,8 @@ class RecordingSession:
         language: str,
         wav_path: Path,
         device_name: str = "",
-    ) -> list[threading.Thread]:
+    ) -> tuple[AudioCapturer, list[threading.Thread]]:
+        """Return (capturer, [worker_threads]) for one audio channel."""
         raw_q: queue.Queue[AudioChunk] = queue.Queue(maxsize=_QUEUE_RAW_SIZE)
         wav_q: queue.Queue[AudioChunk] = queue.Queue(maxsize=_QUEUE_WAV_SIZE)
         seg_q: queue.Queue[AudioSegment] = queue.Queue(maxsize=_QUEUE_SEG_SIZE)
@@ -128,14 +142,11 @@ class RecordingSession:
         t = self._settings.transcription
 
         if source == "mic":
-            capturer = get_mic_capturer(
-                [raw_q, wav_q], cfg, device_name=device_name
-            )
+            capturer = get_mic_capturer([raw_q, wav_q], cfg, device_name=device_name)
         else:
             capturer = get_loopback_capturer([raw_q, wav_q], cfg)
 
-        return [
-            capturer,
+        workers: list[threading.Thread] = [
             WavWriter(wav_path, wav_q, self._stop_event),
             VADWorker(
                 raw_q, seg_q, self._stop_event,
@@ -148,6 +159,7 @@ class RecordingSession:
                 model_name=model, language=language, source=source,
             ),
         ]
+        return capturer, workers
 
 
 def session_output_dir(base_dir: str | Path) -> Path:
