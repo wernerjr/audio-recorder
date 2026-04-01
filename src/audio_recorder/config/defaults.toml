@@ -1,0 +1,27 @@
+[capture]
+# Substring do nome do microfone (vazio = microfone padrão do sistema)
+mic_device_name = ""
+# Tamanho do chunk de áudio em frames
+chunk_size = 1024
+
+[transcription]
+# Modelo Whisper: tiny, base, small, medium, large
+model = "small"
+# Idioma: "auto" para detecção automática, ou código ISO como "pt", "en"
+language = "auto"
+# Silêncio mínimo (ms) para delimitar fim de um segmento de fala
+vad_silence_ms = 500
+# Overlap (ms) no início de cada segmento para não perder sílabas
+vad_overlap_ms = 200
+
+[output]
+# Diretório onde sessões são salvas (relativo ao diretório atual)
+directory = "recordings"
+# Formatos de saída da transcrição: txt, srt, json
+formats = ["txt", "srt"]
+
+[diarization]
+# Ativa identificação de falantes (requer token do HuggingFace)
+enabled = false
+# Token de acesso HuggingFace (ou defina via env HUGGINGFACE_TOKEN)
+token = ""

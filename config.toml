@@ -1,0 +1,17 @@
+# Audio Recorder — configuração do usuário
+# Valores não definidos aqui usam os padrões de config/defaults.toml
+
+[capture]
+# mic_device_name = "USB Microphone"   # descomente e ajuste se necessário
+
+[transcription]
+model = "small"
+language = "auto"
+
+[output]
+directory = "recordings"
+formats = ["txt", "srt"]
+
+[diarization]
+enabled = false
+# token = "hf_..."   # ou defina a variável de ambiente HUGGINGFACE_TOKEN

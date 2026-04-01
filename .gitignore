@@ -1,0 +1,36 @@
+# Legacy
+legacy/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Áudio e transcrições geradas
+recordings/
+*.wav
+*.mp3
+*.txt
+*.srt
+*.json
+
+# Ambiente
+.env
+.env.*
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Modelos baixados (grandes demais para o repo)
+models/
