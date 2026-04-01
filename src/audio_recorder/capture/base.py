@@ -28,11 +28,13 @@ class AudioCapturer(ABC):
     def __init__(
         self,
         config: AudioConfig,
-        output_queue: queue.Queue[AudioChunk],
+        output_queues: queue.Queue[AudioChunk] | list[queue.Queue[AudioChunk]],
         source: str,
     ) -> None:
         self._config = config
-        self._queue = output_queue
+        self._queues: list[queue.Queue[AudioChunk]] = (
+            output_queues if isinstance(output_queues, list) else [output_queues]
+        )
         self._source = source
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
@@ -78,7 +80,8 @@ class AudioCapturer(ABC):
             sample_rate=self._actual_sample_rate,
             channels=self._actual_channels,
         )
-        try:
-            self._queue.put_nowait(chunk)
-        except queue.Full:
-            pass  # drop chunk under backpressure
+        for q in self._queues:
+            try:
+                q.put_nowait(chunk)
+            except queue.Full:
+                pass  # drop chunk under backpressure

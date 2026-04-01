@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 import queue
 import threading
 
 from .engine import WhisperEngine
 from .segment import AudioSegment, TranscriptResult
+
+logger = logging.getLogger(__name__)
 
 
 class TranscriptionWorker(threading.Thread):
@@ -47,4 +50,4 @@ class TranscriptionWorker(threading.Thread):
                     self._result_q.put(result)
             except Exception as exc:
                 # Log and continue — one bad segment should not kill the worker
-                print(f"[TranscriptionWorker] erro ao transcrever segmento: {exc}")
+                logger.error("Erro ao transcrever segmento [%s]: %s", self.name, exc)

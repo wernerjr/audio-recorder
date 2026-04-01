@@ -8,7 +8,7 @@ from ..utils.platform import Platform, current_platform
 
 
 def get_loopback_capturer(
-    output_queue: queue.Queue[AudioChunk],
+    output_queues: queue.Queue[AudioChunk] | list[queue.Queue[AudioChunk]],
     config: AudioConfig | None = None,
 ) -> AudioCapturer:
     """Instantiate the correct loopback capturer for the current platform."""
@@ -19,21 +19,21 @@ def get_loopback_capturer(
 
     if platform == Platform.WINDOWS:
         from .loopback_win import LoopbackCapturerWin
-        return LoopbackCapturerWin(config, output_queue)
+        return LoopbackCapturerWin(config, output_queues)
 
     if platform == Platform.MACOS:
         from .loopback_mac import LoopbackCapturerMac
-        return LoopbackCapturerMac(config, output_queue)
+        return LoopbackCapturerMac(config, output_queues)
 
     if platform == Platform.LINUX:
         from .loopback_linux import LoopbackCapturerLinux
-        return LoopbackCapturerLinux(config, output_queue)
+        return LoopbackCapturerLinux(config, output_queues)
 
     raise NotImplementedError(f"Loopback não suportado nesta plataforma: {platform}")
 
 
 def get_mic_capturer(
-    output_queue: queue.Queue[AudioChunk],
+    output_queues: queue.Queue[AudioChunk] | list[queue.Queue[AudioChunk]],
     config: AudioConfig | None = None,
     device_name: str = "",
     device_index: int | None = None,
@@ -45,7 +45,7 @@ def get_mic_capturer(
     if device_name and device_index is None:
         device_index = _find_device_by_name(device_name)
 
-    return MicCapturer(config, output_queue, device_index=device_index)
+    return MicCapturer(config, output_queues, device_index=device_index)
 
 
 def list_devices() -> dict[str, list[dict]]:

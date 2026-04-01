@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import logging
 import os
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+VALID_MODELS = {"tiny", "base", "small", "medium", "large", "large-v2", "large-v3"}
+VALID_FORMATS = {"txt", "srt", "json"}
 
 
 @dataclass
@@ -71,9 +77,32 @@ def load_settings(path: Path | None = None) -> Settings:
     output = OutputSettings(**output_data)
     diarization = DiarizationSettings(**data.get("diarization", {}))
 
-    return Settings(
+    settings = Settings(
         capture=capture,
         transcription=transcription,
         output=output,
         diarization=diarization,
     )
+    _validate(settings)
+    return settings
+
+
+def _validate(s: Settings) -> None:
+    if s.transcription.model not in VALID_MODELS:
+        raise ValueError(
+            f"Modelo inválido: '{s.transcription.model}'. "
+            f"Válidos: {sorted(VALID_MODELS)}"
+        )
+
+    bad_formats = set(s.output.formats) - VALID_FORMATS
+    if bad_formats:
+        raise ValueError(
+            f"Formato(s) de saída inválido(s): {bad_formats}. "
+            f"Válidos: {sorted(VALID_FORMATS)}"
+        )
+
+    if s.diarization.enabled and not s.diarization.token:
+        logger.warning(
+            "Diarização ativada mas token HuggingFace não configurado. "
+            "Defina 'diarization.token' no config.toml ou HUGGINGFACE_TOKEN."
+        )
