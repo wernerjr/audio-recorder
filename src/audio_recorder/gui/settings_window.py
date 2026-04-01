@@ -17,6 +17,23 @@ from PySide6.QtWidgets import (
 
 from ..config.settings import VALID_MODELS, Settings
 
+# (display_name, whisper_code)
+LANGUAGES = [
+    ("Detecção automática", "auto"),
+    ("Português",           "pt"),
+    ("Inglês",              "en"),
+    ("Espanhol",            "es"),
+    ("Francês",             "fr"),
+    ("Alemão",              "de"),
+    ("Italiano",            "it"),
+    ("Japonês",             "ja"),
+    ("Coreano",             "ko"),
+    ("Chinês",              "zh"),
+    ("Russo",               "ru"),
+    ("Árabe",               "ar"),
+    ("Hindi",               "hi"),
+]
+
 
 class SettingsWindow(QDialog):
     """Modal dialog for editing application settings."""
@@ -36,7 +53,7 @@ class SettingsWindow(QDialog):
     def get_settings(self) -> Settings:
         s = deepcopy(self._original)
         s.transcription.model = self._model.currentText()
-        s.transcription.language = self._lang.text().strip() or "auto"
+        s.transcription.language = self._lang.currentData() or "auto"
         s.output.directory = self._out_dir.text().strip() or "recordings"
         s.output.formats = [
             fmt for fmt, cb in [("txt", self._fmt_txt), ("srt", self._fmt_srt), ("json", self._fmt_json)]
@@ -62,8 +79,9 @@ class SettingsWindow(QDialog):
         self._model.addItems(sorted(VALID_MODELS))
         trans_form.addRow("Modelo Whisper:", self._model)
 
-        self._lang = QLineEdit()
-        self._lang.setPlaceholderText("auto")
+        self._lang = QComboBox()
+        for display, code in LANGUAGES:
+            self._lang.addItem(display, userData=code)
         trans_form.addRow("Idioma:", self._lang)
 
         layout.addWidget(trans_group)
@@ -119,7 +137,9 @@ class SettingsWindow(QDialog):
     def _load(self, s: Settings) -> None:
         idx = self._model.findText(s.transcription.model)
         self._model.setCurrentIndex(max(idx, 0))
-        self._lang.setText(s.transcription.language)
+        codes = [code for _, code in LANGUAGES]
+        lang_idx = codes.index(s.transcription.language) if s.transcription.language in codes else 0
+        self._lang.setCurrentIndex(lang_idx)
         self._out_dir.setText(s.output.directory)
         self._fmt_txt.setChecked("txt" in s.output.formats)
         self._fmt_srt.setChecked("srt" in s.output.formats)
