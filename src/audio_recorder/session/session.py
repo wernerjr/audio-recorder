@@ -21,6 +21,18 @@ from .wav_writer import WavWriter
 logger = logging.getLogger(__name__)
 
 _QUEUE_RAW_SIZE = 200
+_SOURCE_FILES = ["microfone.wav", "sistema.wav", "microfone.offset", "sistema.offset"]
+
+
+def _cleanup_source_files(output_dir: Path) -> None:
+    """Remove individual channel files after a successful merge."""
+    for name in _SOURCE_FILES:
+        p = output_dir / name
+        try:
+            if p.exists():
+                p.unlink()
+        except OSError:
+            logger.warning("Não foi possível remover %s", p)
 _QUEUE_WAV_SIZE = 200
 _QUEUE_SEG_SIZE = 50
 
@@ -126,6 +138,7 @@ class RecordingSession:
                 merged_path,
             )
             merged_wav_str = str(merged_path)
+            _cleanup_source_files(self._output_dir)
         except Exception:
             logger.exception("Falha ao mixar áudio.")
 

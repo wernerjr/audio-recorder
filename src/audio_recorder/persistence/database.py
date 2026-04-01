@@ -9,6 +9,14 @@ _DDL = """
 PRAGMA journal_mode=WAL;
 PRAGMA foreign_keys=ON;
 
+CREATE TABLE IF NOT EXISTS meeting_minutes (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    content    TEXT    NOT NULL,
+    created_at TEXT    NOT NULL,
+    model_id   TEXT    NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS sessions (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     started_at TEXT    NOT NULL,
@@ -61,6 +69,7 @@ def _apply_migrations(db: sqlite3.Connection) -> None:
     if "merged_wav" not in cols:
         db.execute("ALTER TABLE sessions ADD COLUMN merged_wav TEXT")
         db.commit()
+    # meeting_minutes is created via _DDL with IF NOT EXISTS — no ALTER needed
 
 
 def save_session(
@@ -145,4 +154,67 @@ def search_segments(db: sqlite3.Connection, query: str) -> list[dict]:
 def delete_session(db: sqlite3.Connection, session_id: int) -> None:
     """Delete a session and all its segments (CASCADE handles the segments table)."""
     db.execute("DELETE FROM sessions WHERE id=?", (session_id,))
+    db.commit()
+
+
+def replace_segments(
+    db: sqlite3.Connection,
+    session_id: int,
+    segments: list[dict],
+) -> None:
+    """Replace all segments for *session_id* with a new list.
+
+    DELETE triggers the FTS5 delete trigger automatically.
+    *segments* is a list of dicts with keys: start, end, source, speaker, text.
+    """
+    db.execute("DELETE FROM segments WHERE session_id=?", (session_id,))
+    db.executemany(
+        "INSERT INTO segments (session_id, start, end, source, speaker, text) VALUES (?,?,?,?,?,?)",
+        [
+            (session_id, s["start"], s["end"], s["source"], s.get("speaker"), s["text"])
+            for s in segments
+        ],
+    )
+    db.commit()
+
+
+# ---------------------------------------------------------------------------
+# Meeting minutes
+# ---------------------------------------------------------------------------
+
+def save_minutes(
+    db: sqlite3.Connection,
+    session_id: int,
+    content: str,
+    model_id: str,
+) -> int:
+    """Insert a new meeting minutes record and return its id."""
+    from datetime import datetime
+    cur = db.execute(
+        "INSERT INTO meeting_minutes (session_id, content, created_at, model_id) VALUES (?,?,?,?)",
+        (session_id, content, datetime.now().isoformat(), model_id),
+    )
+    db.commit()
+    return cur.lastrowid
+
+
+def get_minutes(db: sqlite3.Connection, session_id: int) -> dict | None:
+    """Return the latest minutes for *session_id*, or None if absent."""
+    row = db.execute(
+        "SELECT id, content, created_at, model_id FROM meeting_minutes "
+        "WHERE session_id=? ORDER BY created_at DESC LIMIT 1",
+        (session_id,),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def update_minutes(db: sqlite3.Connection, minutes_id: int, content: str) -> None:
+    """Overwrite the text of an existing minutes record."""
+    db.execute("UPDATE meeting_minutes SET content=? WHERE id=?", (content, minutes_id))
+    db.commit()
+
+
+def delete_minutes(db: sqlite3.Connection, minutes_id: int) -> None:
+    """Delete a minutes record."""
+    db.execute("DELETE FROM meeting_minutes WHERE id=?", (minutes_id,))
     db.commit()
