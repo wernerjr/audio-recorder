@@ -9,7 +9,6 @@ from pathlib import Path
 from ..capture.base import AudioCapturer, AudioChunk, AudioConfig
 from ..capture.factory import get_loopback_capturer, get_mic_capturer
 from ..config.settings import Settings
-from ..merge.formatter import write_all
 from ..merge.merger import Merger, MergedSegment
 from ..persistence.database import get_db, save_session
 from ..transcription.segment import AudioSegment, TranscriptResult
@@ -107,8 +106,8 @@ class RecordingSession:
         self,
         results: list[TranscriptResult],
         diarization_segments: list | None = None,
-    ) -> list[Path]:
-        """Run merger + formatter and write output files. Returns created paths."""
+    ) -> None:
+        """Merge transcription results and persist to SQLite history."""
         mic_results = [r for r in results if r.source == "mic"]
         sys_results = [r for r in results if r.source == "system"]
 
@@ -116,13 +115,6 @@ class RecordingSession:
             mic_results, sys_results, diarization_segments
         )
 
-        base = self._output_dir / "merged_transcript"
-        created = write_all(segments, base, self._settings.output.formats)
-
-        for path in created:
-            logger.info("Arquivo gerado: %s", path)
-
-        # Persist to SQLite history
         db_path = (
             Path(self._settings.output.db_path)
             if self._settings.output.db_path
@@ -135,8 +127,6 @@ class RecordingSession:
             logger.info("Sessão salva no histórico: %s", db_path)
         except Exception:
             logger.exception("Falha ao salvar sessão no histórico SQLite.")
-
-        return created
 
     # ------------------------------------------------------------------
     # Internal helpers

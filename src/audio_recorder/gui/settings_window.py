@@ -8,7 +8,6 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFormLayout,
     QGroupBox,
-    QHBoxLayout,
     QLabel,
     QLineEdit,
     QComboBox,
@@ -55,10 +54,6 @@ class SettingsWindow(QDialog):
         s.transcription.model = self._model.currentText()
         s.transcription.language = self._lang.currentData() or "auto"
         s.output.directory = self._out_dir.text().strip() or "recordings"
-        s.output.formats = [
-            fmt for fmt, cb in [("txt", self._fmt_txt), ("srt", self._fmt_srt), ("json", self._fmt_json)]
-            if cb.isChecked()
-        ]
         s.diarization.enabled = self._diar_enabled.isChecked()
         s.diarization.token = self._hf_token.text().strip()
         return s
@@ -91,16 +86,7 @@ class SettingsWindow(QDialog):
         out_form = QFormLayout(out_group)
 
         self._out_dir = QLineEdit()
-        out_form.addRow("Diretório:", self._out_dir)
-
-        fmt_row = QHBoxLayout()
-        self._fmt_txt = QCheckBox("TXT")
-        self._fmt_srt = QCheckBox("SRT")
-        self._fmt_json = QCheckBox("JSON")
-        for cb in (self._fmt_txt, self._fmt_srt, self._fmt_json):
-            fmt_row.addWidget(cb)
-        fmt_row.addStretch()
-        out_form.addRow("Formatos:", fmt_row)
+        out_form.addRow("Diretório de gravações:", self._out_dir)
 
         layout.addWidget(out_group)
 
@@ -141,8 +127,5 @@ class SettingsWindow(QDialog):
         lang_idx = codes.index(s.transcription.language) if s.transcription.language in codes else 0
         self._lang.setCurrentIndex(lang_idx)
         self._out_dir.setText(s.output.directory)
-        self._fmt_txt.setChecked("txt" in s.output.formats)
-        self._fmt_srt.setChecked("srt" in s.output.formats)
-        self._fmt_json.setChecked("json" in s.output.formats)
         self._diar_enabled.setChecked(s.diarization.enabled)
         self._hf_token.setText(s.diarization.token)

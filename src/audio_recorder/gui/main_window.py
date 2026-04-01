@@ -27,7 +27,7 @@ _CONFIG_PATH = Path("config.toml")
 class _StopWorker(QThread):
     """Runs session.stop() + merge_and_save() in a background thread."""
 
-    finished = Signal(list)   # list[Path]
+    finished = Signal()
     failed = Signal(str)
 
     def __init__(
@@ -61,8 +61,8 @@ class _StopWorker(QThread):
                 if mic_wav.exists():
                     diar_segments = engine.diarize(mic_wav)
 
-            files = self._session.merge_and_save(self._results, diar_segments)
-            self.finished.emit(files)
+            self._session.merge_and_save(self._results, diar_segments)
+            self.finished.emit()
 
         except Exception as exc:
             import traceback
@@ -211,11 +211,11 @@ class MainWindow(QMainWindow):
             self._results,
             self._settings.diarization,
         )
-        self._stop_worker.finished.connect(self._on_stop_finished)
+        self._stop_worker.finished.connect(lambda: self._on_stop_finished())
         self._stop_worker.failed.connect(self._on_stop_failed)
         self._stop_worker.start()
 
-    def _on_stop_finished(self, files: list) -> None:
+    def _on_stop_finished(self) -> None:
         self._session = None
         self._drain_results()  # final flush
         self._record_btn.setEnabled(True)
@@ -223,10 +223,8 @@ class MainWindow(QMainWindow):
         self._record_btn.setProperty("recording", "false")
         self._record_btn.style().unpolish(self._record_btn)
         self._record_btn.style().polish(self._record_btn)
-        self._status_lbl.setText(f"Concluído — {len(files)} arquivo(s) gerado(s)")
-        self.statusBar().showMessage(
-            "  ".join(str(f) for f in files) if files else "Nenhum resultado."
-        )
+        self._status_lbl.setText("Concluído — sessão salva no histórico")
+        self.statusBar().showMessage("Transcrição salva no histórico.")
 
     def _on_stop_failed(self, error: str) -> None:
         self._session = None

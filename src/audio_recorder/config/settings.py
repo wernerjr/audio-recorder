@@ -9,7 +9,6 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 VALID_MODELS = {"tiny", "base", "small", "medium", "large", "large-v2", "large-v3"}
-VALID_FORMATS = {"txt", "srt", "json"}
 
 
 @dataclass
@@ -29,8 +28,7 @@ class TranscriptionSettings:
 @dataclass
 class OutputSettings:
     directory: str = "recordings"
-    formats: list[str] = field(default_factory=lambda: ["txt", "srt"])
-    db_path: str = ""  # caminho do history.db; vazio → <output_dir>/../history.db
+    db_path: str = ""  # caminho do history.db; vazio → <output_dir>/history.db
 
 
 @dataclass
@@ -74,7 +72,7 @@ def load_settings(path: Path | None = None) -> Settings:
 
     capture = CaptureSettings(**data.get("capture", {}))
     transcription = TranscriptionSettings(**data.get("transcription", {}))
-    output_data = data.get("output", {})
+    output_data = {k: v for k, v in data.get("output", {}).items() if k in ("directory", "db_path")}
     output = OutputSettings(**output_data)
     diarization = DiarizationSettings(**data.get("diarization", {}))
 
@@ -93,13 +91,6 @@ def _validate(s: Settings) -> None:
         raise ValueError(
             f"Modelo inválido: '{s.transcription.model}'. "
             f"Válidos: {sorted(VALID_MODELS)}"
-        )
-
-    bad_formats = set(s.output.formats) - VALID_FORMATS
-    if bad_formats:
-        raise ValueError(
-            f"Formato(s) de saída inválido(s): {bad_formats}. "
-            f"Válidos: {sorted(VALID_FORMATS)}"
         )
 
     if s.diarization.enabled and not s.diarization.token:

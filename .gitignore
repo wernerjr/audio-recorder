@@ -1,6 +1,3 @@
-# Legacy
-legacy/
-
 # Python
 __pycache__/
 *.py[cod]

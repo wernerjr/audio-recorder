@@ -155,92 +155,14 @@ def record(
         typer.echo("Gerando arquivos de transcrição...")
 
     try:
-        files = session.merge_and_save(results, diarization_segments)
+        session.merge_and_save(results, diarization_segments)
     except Exception as exc:
         typer.secho(f"Erro ao salvar transcrição: {exc}", fg=typer.colors.RED, err=True)
         raise typer.Exit(1)
 
     if not quiet:
-        typer.secho("\nArquivos gerados:", fg=typer.colors.GREEN)
-        for f in files:
-            typer.echo(f"  {f}")
+        typer.secho("\nSessão salva no histórico.", fg=typer.colors.GREEN)
         typer.echo()
-
-
-@app.command()
-def transcribe(
-    audio: Annotated[Path, typer.Argument(help="Arquivo .wav para transcrever")],
-    model: Annotated[
-        Optional[str],
-        typer.Option("--model", "-m", help="Modelo Whisper"),
-    ] = None,
-    lang: Annotated[
-        Optional[str],
-        typer.Option("--lang", "-l", help="Idioma"),
-    ] = None,
-    fmt: Annotated[
-        Optional[str],
-        typer.Option("--format", "-f", help="Formatos de saída separados por vírgula: txt,srt,json"),
-    ] = None,
-    verbose: Annotated[bool, typer.Option("--verbose", "-v")] = False,
-    quiet: Annotated[bool, typer.Option("--quiet", "-q")] = False,
-) -> None:
-    """Transcreve um arquivo de áudio .wav existente."""
-    _setup_logging(verbose, quiet)
-
-    if not audio.exists():
-        typer.secho(f"Arquivo não encontrado: {audio}", fg=typer.colors.RED, err=True)
-        raise typer.Exit(1)
-
-    from ..config.settings import load_settings
-    from ..transcription.engine import WhisperEngine
-    from ..transcription.segment import AudioSegment
-    from ..merge.formatter import write_all
-    from ..merge.merger import MergedSegment
-
-    config_path = _DEFAULT_CONFIG if _DEFAULT_CONFIG.exists() else None
-    settings = load_settings(config_path)
-    if model:
-        settings.transcription.model = model
-    if lang:
-        settings.transcription.language = lang
-    formats = fmt.split(",") if fmt else settings.output.formats
-
-    if not quiet:
-        typer.echo(f"Carregando modelo '{settings.transcription.model}'...")
-
-    engine = WhisperEngine(settings.transcription.model, settings.transcription.language)
-
-    import wave
-    import numpy as np
-
-    with wave.open(str(audio), "rb") as wf:
-        sample_rate = wf.getframerate()
-        channels = wf.getnchannels()
-        data = wf.readframes(wf.getnframes())
-
-    segment = AudioSegment(
-        data=data, sample_rate=sample_rate, channels=channels,
-        start=0.0, end=len(data) / (sample_rate * channels * 2),
-        source="file",
-    )
-
-    if not quiet:
-        typer.echo("Transcrevendo...")
-
-    results = engine.transcribe(segment)
-    segments = [
-        MergedSegment(text=r.text, start=r.start, end=r.end, source=r.source)
-        for r in results
-    ]
-
-    base = audio.with_suffix("")
-    files = write_all(segments, base, formats)
-
-    if not quiet:
-        typer.secho("Arquivos gerados:", fg=typer.colors.GREEN)
-        for f in files:
-            typer.echo(f"  {f}")
 
 
 @app.command()
