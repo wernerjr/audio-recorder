@@ -21,6 +21,7 @@ dependencies = [
 
 [project.scripts]
 audio-recorder = "audio_recorder.cli.cli:app"
+audio-recorder-gui = "audio_recorder.gui.app:run"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/audio_recorder"]

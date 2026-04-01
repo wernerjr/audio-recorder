@@ -18,6 +18,13 @@ app = typer.Typer(
 _DEFAULT_CONFIG = Path("config.toml")
 
 
+@app.command()
+def gui() -> None:
+    """Abre a interface gráfica (PySide6)."""
+    from ..gui.app import run
+    run()
+
+
 def _setup_logging(verbose: bool, quiet: bool) -> None:
     if quiet:
         level = logging.ERROR
