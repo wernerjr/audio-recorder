@@ -52,7 +52,15 @@ def get_db(path: Path) -> sqlite3.Connection:
     db.row_factory = sqlite3.Row
     db.executescript(_DDL)
     db.commit()
+    _apply_migrations(db)
     return db
+
+
+def _apply_migrations(db: sqlite3.Connection) -> None:
+    cols = {row[1] for row in db.execute("PRAGMA table_info(sessions)")}
+    if "merged_wav" not in cols:
+        db.execute("ALTER TABLE sessions ADD COLUMN merged_wav TEXT")
+        db.commit()
 
 
 def save_session(
@@ -61,6 +69,7 @@ def save_session(
     started_at: str,
     ended_at: str,
     segments: list[Any],
+    merged_wav: str | None = None,
 ) -> int:
     """
     Persist one recording session and its merged segments.
@@ -73,8 +82,8 @@ def save_session(
     duration = segments[-1].end if segments else 0.0
 
     cur = db.execute(
-        "INSERT INTO sessions (started_at, ended_at, duration_s, output_dir) VALUES (?,?,?,?)",
-        (started_at, ended_at, duration, str(output_dir)),
+        "INSERT INTO sessions (started_at, ended_at, duration_s, output_dir, merged_wav) VALUES (?,?,?,?,?)",
+        (started_at, ended_at, duration, str(output_dir), merged_wav),
     )
     session_id = cur.lastrowid
 
@@ -93,7 +102,7 @@ def list_sessions(db: sqlite3.Connection) -> list[dict]:
     """Return all sessions ordered newest-first, including segment count."""
     rows = db.execute(
         """
-        SELECT s.id, s.started_at, s.ended_at, s.duration_s, s.output_dir,
+        SELECT s.id, s.started_at, s.ended_at, s.duration_s, s.output_dir, s.merged_wav,
                COUNT(sg.id) AS segment_count
         FROM sessions s
         LEFT JOIN segments sg ON sg.session_id = s.id

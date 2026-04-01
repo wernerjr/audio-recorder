@@ -3,7 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, QUrl
+from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import (
     QDialog,
     QHBoxLayout,
@@ -13,6 +14,7 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMessageBox,
     QPushButton,
+    QSlider,
     QVBoxLayout,
     QWidget,
 )
@@ -31,20 +33,33 @@ class _SegmentRow:
     speaker: str | None
 
 
+def _fmt_time(ms: int) -> str:
+    s = ms // 1000
+    m, s = divmod(s, 60)
+    return f"{m}:{s:02d}"
+
+
 class HistoryWindow(QDialog):
     """Modal dialog showing past recording sessions and their transcripts."""
 
     def __init__(self, db_path: Path, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Histórico de Gravações")
-        self.resize(900, 600)
+        self.resize(960, 640)
         self._db_path = db_path
         self._sessions: list[dict] = []
         self._search_timer = QTimer(self)
         self._search_timer.setSingleShot(True)
         self._search_timer.setInterval(300)
         self._search_timer.timeout.connect(self._apply_search)
+
+        self._player = QMediaPlayer(self)
+        self._audio_out = QAudioOutput(self)
+        self._player.setAudioOutput(self._audio_out)
+        self._audio_out.setVolume(1.0)
+
         self._build_ui()
+        self._connect_player()
         self._load_sessions()
 
     # ------------------------------------------------------------------
@@ -74,11 +89,32 @@ class HistoryWindow(QDialog):
 
         root.addWidget(left)
 
-        # ── Right panel: transcript viewer ─────────────────────────────
+        # ── Right panel: player + transcript ──────────────────────────
         right = QWidget()
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(0, 0, 0, 0)
 
+        # Audio player controls
+        player_row = QHBoxLayout()
+        self._play_btn = QPushButton("▶")
+        self._play_btn.setFixedWidth(40)
+        self._play_btn.setEnabled(False)
+        self._play_btn.clicked.connect(self._toggle_play)
+        player_row.addWidget(self._play_btn)
+
+        self._seek_slider = QSlider(Qt.Orientation.Horizontal)
+        self._seek_slider.setEnabled(False)
+        self._seek_slider.sliderMoved.connect(self._on_seek)
+        player_row.addWidget(self._seek_slider, stretch=1)
+
+        self._time_label = QLabel("0:00 / 0:00")
+        self._time_label.setFixedWidth(90)
+        self._time_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        player_row.addWidget(self._time_label)
+
+        right_layout.addLayout(player_row)
+
+        # Search
         search_row = QHBoxLayout()
         search_row.addWidget(QLabel("Buscar:"))
         self._search_box = QLineEdit()
@@ -92,6 +128,11 @@ class HistoryWindow(QDialog):
         right_layout.addWidget(self._transcript)
 
         root.addWidget(right)
+
+    def _connect_player(self) -> None:
+        self._player.positionChanged.connect(self._on_position_changed)
+        self._player.durationChanged.connect(self._on_duration_changed)
+        self._player.playbackStateChanged.connect(self._on_playback_state_changed)
 
     # ------------------------------------------------------------------
     # Data loading
@@ -115,21 +156,38 @@ class HistoryWindow(QDialog):
             mins, secs = divmod(int(duration), 60)
             count = s.get("segment_count", 0)
             started = s["started_at"].replace("T", " ")[:16]
-            label = f"{started}  ({mins}:{secs:02d}, {count} seg.)"
+            has_audio = "🔊 " if s.get("merged_wav") else ""
+            label = f"{has_audio}{started}  ({mins}:{secs:02d}, {count} seg.)"
             item = QListWidgetItem(label)
             item.setData(Qt.ItemDataRole.UserRole, s["id"])
             self._session_list.addItem(item)
 
     # ------------------------------------------------------------------
-    # Slots
+    # Slots — session list
     # ------------------------------------------------------------------
 
     def _on_session_selected(self, row: int) -> None:
+        self._player.stop()
         self._delete_btn.setEnabled(row >= 0)
         if row < 0:
             return
-        session_id = self._session_list.item(row).data(Qt.ItemDataRole.UserRole)
+
+        session = self._sessions[row]
+        session_id = session["id"]
         self._show_session(session_id)
+
+        # Load audio if available
+        merged_wav = session.get("merged_wav")
+        if merged_wav and Path(merged_wav).exists():
+            self._player.setSource(QUrl.fromLocalFile(merged_wav))
+            self._play_btn.setEnabled(True)
+            self._seek_slider.setEnabled(True)
+        else:
+            self._player.setSource(QUrl())
+            self._play_btn.setEnabled(False)
+            self._seek_slider.setEnabled(False)
+            self._seek_slider.setValue(0)
+            self._time_label.setText("0:00 / 0:00")
 
     def _show_session(self, session_id: int, filter_text: str = "") -> None:
         db = get_db(self._db_path)
@@ -168,12 +226,13 @@ class HistoryWindow(QDialog):
         reply = QMessageBox.question(
             self,
             "Excluir sessão",
-            "Remover esta sessão do histórico? Os arquivos de áudio e transcrição não serão apagados.",
+            "Remover esta sessão do histórico? Os arquivos de áudio não serão apagados.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply != QMessageBox.StandardButton.Yes:
             return
 
+        self._player.stop()
         db = get_db(self._db_path)
         try:
             delete_session(db, session_id)
@@ -183,3 +242,41 @@ class HistoryWindow(QDialog):
         self._transcript.clear_transcript()
         self._load_sessions()
         self._delete_btn.setEnabled(False)
+
+    # ------------------------------------------------------------------
+    # Slots — audio player
+    # ------------------------------------------------------------------
+
+    def _toggle_play(self) -> None:
+        if self._player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
+            self._player.pause()
+        else:
+            self._player.play()
+
+    def _on_seek(self, value: int) -> None:
+        self._player.setPosition(value)
+
+    def _on_position_changed(self, pos_ms: int) -> None:
+        duration = self._player.duration()
+        self._seek_slider.blockSignals(True)
+        self._seek_slider.setValue(pos_ms)
+        self._seek_slider.blockSignals(False)
+        self._time_label.setText(f"{_fmt_time(pos_ms)} / {_fmt_time(duration)}")
+        self._transcript.highlight_at(pos_ms / 1000.0)
+
+    def _on_duration_changed(self, duration_ms: int) -> None:
+        self._seek_slider.setRange(0, duration_ms)
+
+    def _on_playback_state_changed(self, state: QMediaPlayer.PlaybackState) -> None:
+        if state == QMediaPlayer.PlaybackState.PlayingState:
+            self._play_btn.setText("⏸")
+        else:
+            self._play_btn.setText("▶")
+
+    # ------------------------------------------------------------------
+    # Cleanup
+    # ------------------------------------------------------------------
+
+    def closeEvent(self, event) -> None:
+        self._player.stop()
+        super().closeEvent(event)

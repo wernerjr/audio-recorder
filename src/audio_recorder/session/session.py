@@ -10,6 +10,7 @@ from ..capture.base import AudioCapturer, AudioChunk, AudioConfig
 from ..capture.factory import get_loopback_capturer, get_mic_capturer
 from ..config.settings import Settings
 from ..merge.merger import Merger, MergedSegment
+from ..audio.mixer import mix_wav
 from ..persistence.database import get_db, save_session
 from ..transcription.segment import AudioSegment, TranscriptResult
 from ..vad.silero import VADWorker
@@ -115,6 +116,19 @@ class RecordingSession:
             mic_results, sys_results, diarization_segments
         )
 
+        # Mix audio channels into a single merged.wav
+        merged_wav_str: str | None = None
+        try:
+            merged_path = self._output_dir / "merged.wav"
+            mix_wav(
+                self._output_dir / "microfone.wav",
+                self._output_dir / "sistema.wav",
+                merged_path,
+            )
+            merged_wav_str = str(merged_path)
+        except Exception:
+            logger.exception("Falha ao mixar áudio.")
+
         db_path = (
             Path(self._settings.output.db_path)
             if self._settings.output.db_path
@@ -122,7 +136,10 @@ class RecordingSession:
         )
         try:
             db = get_db(db_path)
-            save_session(db, self._output_dir, self._started_at, datetime.now().isoformat(), segments)
+            save_session(
+                db, self._output_dir, self._started_at, datetime.now().isoformat(),
+                segments, merged_wav=merged_wav_str,
+            )
             db.close()
             logger.info("Sessão salva no histórico: %s", db_path)
         except Exception:
