@@ -50,7 +50,7 @@ class VADWorker(threading.Thread):
         super().__init__(name=f"vad-{source}", daemon=True)
         self._raw_q = raw_queue
         self._seg_q = segment_queue
-        self._stop = stop_event
+        self._stop_event = stop_event
         self._source = source
         self._silence_ms = silence_ms
         self._speech_pad_ms = speech_pad_ms
@@ -72,7 +72,7 @@ class VADWorker(threading.Thread):
         speech_chunks: list[AudioChunk] = []
         speech_start: float | None = None  # session-relative seconds
 
-        while not self._stop.is_set() or not self._raw_q.empty():
+        while not self._stop_event.is_set() or not self._raw_q.empty():
             try:
                 chunk = self._raw_q.get(timeout=0.05)
             except queue.Empty:

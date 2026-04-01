@@ -31,14 +31,14 @@ class TranscriptionWorker(threading.Thread):
         super().__init__(name=f"transcription-{source}", daemon=True)
         self._seg_q = segment_queue
         self._result_q = result_queue
-        self._stop = stop_event
+        self._stop_event = stop_event
         self._model_name = model_name
         self._language = language
 
     def run(self) -> None:
         engine = WhisperEngine(self._model_name, self._language)
 
-        while not self._stop.is_set() or not self._seg_q.empty():
+        while not self._stop_event.is_set() or not self._seg_q.empty():
             try:
                 segment = self._seg_q.get(timeout=0.1)
             except queue.Empty:

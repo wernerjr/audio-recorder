@@ -27,12 +27,12 @@ class WavWriter(threading.Thread):
         super().__init__(name=f"wav-writer-{path.stem}", daemon=True)
         self._path = path
         self._queue = chunk_queue
-        self._stop = stop_event
+        self._stop_event = stop_event
 
     def run(self) -> None:
         wf: wave.Wave_write | None = None
         try:
-            while not self._stop.is_set() or not self._queue.empty():
+            while not self._stop_event.is_set() or not self._queue.empty():
                 try:
                     chunk = self._queue.get(timeout=0.05)
                 except queue.Empty:
