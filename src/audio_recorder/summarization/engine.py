@@ -4,35 +4,19 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-_MAX_INPUT_TOKENS = 1024   # BART-large-cnn hard limit
-_MAX_OUTPUT_TOKENS = 512
+_DEFAULT_SENTENCES = 15
 
 
 class SummarizationEngine:
     """
-    Generates meeting minutes from a list of transcript segments using a
-    HuggingFace summarization model (default: facebook/bart-large-cnn).
-
-    The pipeline is loaded lazily on the first call to summarize().
+    Generates meeting minutes from a list of transcript segments using
+    extractive summarization (sumy LSA) — no PyTorch or model download required.
     """
 
-    DEFAULT_MODEL = "facebook/bart-large-cnn"
+    DEFAULT_MODEL = "lsa"  # kept for API compatibility; value is ignored
 
     def __init__(self, model_id: str = DEFAULT_MODEL) -> None:
         self._model_id = model_id
-        self._pipeline = None  # lazy load
-
-    def _load(self) -> None:
-        if self._pipeline is not None:
-            return
-        from transformers import pipeline
-        logger.info("Carregando modelo de sumarização: %s", self._model_id)
-        self._pipeline = pipeline(
-            "summarization",
-            model=self._model_id,
-            tokenizer=self._model_id,
-        )
-        logger.info("Modelo carregado.")
 
     def summarize(self, segments: list[dict]) -> str:
         """
@@ -43,10 +27,11 @@ class SummarizationEngine:
 
         Returns the generated summary string.
         """
-        self._load()
-        assert self._pipeline is not None
+        from sumy.nlp.tokenizers import Tokenizer
+        from sumy.parsers.plaintext import PlaintextParser
+        from sumy.summarizers.lsa import LsaSummarizer
 
-        # Build readable transcript text for the model
+        # Build readable transcript
         lines: list[str] = []
         for seg in segments:
             speaker = seg.get("speaker") or seg.get("source", "")
@@ -55,11 +40,22 @@ class SummarizationEngine:
 
         logger.debug("Texto de entrada para sumarização: %d chars", len(full_text))
 
-        result = self._pipeline(
-            full_text,
-            max_length=_MAX_OUTPUT_TOKENS,
-            min_length=64,
-            truncation=True,
-            do_sample=False,
-        )
-        return result[0]["summary_text"]
+        # Try Portuguese tokenizer, fall back to English
+        for lang in ("portuguese", "english"):
+            try:
+                tokenizer = Tokenizer(lang)
+                break
+            except Exception:
+                continue
+        else:
+            tokenizer = Tokenizer("english")
+
+        parser = PlaintextParser.from_string(full_text, tokenizer)
+        summarizer = LsaSummarizer()
+
+        # Scale sentence count to transcript length
+        doc_sentences = len(list(parser.document.sentences))
+        count = min(_DEFAULT_SENTENCES, max(3, doc_sentences // 3))
+
+        sentences = summarizer(parser.document, count)
+        return "\n\n".join(str(s) for s in sentences)
