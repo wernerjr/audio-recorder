@@ -11,6 +11,8 @@ class AudioChunk:
     data: bytes          # PCM Int16, interleaved
     timestamp: float     # monotonic seconds from session start
     source: str          # "mic" | "system"
+    sample_rate: int = 0
+    channels: int = 0
 
 
 @dataclass
@@ -69,7 +71,13 @@ class AudioCapturer(ABC):
         return self._actual_channels or (self._config.channels or 1)
 
     def _put(self, data: bytes, timestamp: float) -> None:
-        chunk = AudioChunk(data=data, timestamp=timestamp, source=self._source)
+        chunk = AudioChunk(
+            data=data,
+            timestamp=timestamp,
+            source=self._source,
+            sample_rate=self._actual_sample_rate,
+            channels=self._actual_channels,
+        )
         try:
             self._queue.put_nowait(chunk)
         except queue.Full:
