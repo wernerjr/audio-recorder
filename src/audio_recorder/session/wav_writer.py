@@ -31,6 +31,7 @@ class WavWriter(threading.Thread):
 
     def run(self) -> None:
         wf: wave.Wave_write | None = None
+        offset_written = False
         try:
             while not self._stop_event.is_set() or not self._queue.empty():
                 try:
@@ -45,6 +46,13 @@ class WavWriter(threading.Thread):
                     wf.setframerate(chunk.sample_rate or 44100)
                     logger.debug("WAV aberto: %s (%dHz, %dch)", self._path.name,
                                  chunk.sample_rate, chunk.channels)
+
+                if not offset_written:
+                    # Save the wall-clock timestamp of the first audio chunk so
+                    # the mixer can align both channels correctly.
+                    offset_path = self._path.with_suffix(".offset")
+                    offset_path.write_text(str(chunk.timestamp), encoding="utf-8")
+                    offset_written = True
 
                 wf.writeframes(chunk.data)
 
