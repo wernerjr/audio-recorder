@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -13,38 +16,40 @@ class DiarizationSegment:
 
 class DiarizationEngine:
     """
-    Wraps pyannote-audio speaker diarization pipeline.
+    Wraps simple-diarizer for speaker diarization.
 
-    Uses the free public model freevoid/speaker-diarization-3.1 — no token required.
+    Uses speechbrain/spkrec-ecapa-voxceleb embeddings — no token required.
 
     Usage:
         engine = DiarizationEngine()
         segments = engine.diarize(Path("microfone.wav"))
     """
 
-    MODEL_ID = "freevoid/speaker-diarization-3.1"
-
-    def __init__(self, token: str = "") -> None:
-        self._pipeline = None  # lazy load
+    def __init__(self) -> None:
+        self._diarizer = None  # lazy load
 
     def _load(self) -> None:
-        if self._pipeline is not None:
+        if self._diarizer is not None:
             return
-        from pyannote.audio import Pipeline
-
-        self._pipeline = Pipeline.from_pretrained(self.MODEL_ID)
+        from simple_diarizer.diarizer import Diarizer
+        logger.info("Carregando modelo de diarização (ECAPA-TDNN)…")
+        self._diarizer = Diarizer(embed_model="ecapa", cluster_method="sc")
+        logger.info("Modelo de diarização carregado.")
 
     def diarize(self, audio_path: Path) -> list[DiarizationSegment]:
         """Run diarization on a WAV file and return speaker segments."""
         self._load()
-        assert self._pipeline is not None
+        assert self._diarizer is not None
 
-        diarization = self._pipeline(str(audio_path))
+        logger.info("Diarizando: %s", audio_path)
+        raw = self._diarizer.diarize(str(audio_path), num_speakers=None)
+
         segments = []
-        for turn, _, speaker in diarization.itertracks(yield_label=True):
+        for seg in raw:
+            speaker = f"SPEAKER_{int(seg['label']):02d}"
             segments.append(DiarizationSegment(
-                start=turn.start,
-                end=turn.end,
+                start=float(seg["start"]),
+                end=float(seg["end"]),
                 speaker=speaker,
             ))
         return segments

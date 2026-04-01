@@ -55,11 +55,17 @@ class _StopWorker(QThread):
 
             diar_segments = None
             if self._diar.enabled:
-                from ..diarization.engine import DiarizationEngine
-                engine = DiarizationEngine()
-                mic_wav = self._session._output_dir / "microfone.wav"
-                if mic_wav.exists():
-                    diar_segments = engine.diarize(mic_wav)
+                try:
+                    from ..diarization.engine import DiarizationEngine
+                    engine = DiarizationEngine()
+                    mic_wav = self._session._output_dir / "microfone.wav"
+                    if mic_wav.exists():
+                        diar_segments = engine.diarize(mic_wav)
+                except Exception as diar_exc:
+                    import logging
+                    logging.getLogger(__name__).warning(
+                        "Diarização falhou (sessão salva sem labels de speaker): %s", diar_exc
+                    )
 
             self._session.merge_and_save(self._results, diar_segments)
             self.finished.emit()

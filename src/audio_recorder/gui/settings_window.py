@@ -97,9 +97,8 @@ class SettingsWindow(QDialog):
         diar_form.addRow(self._diar_enabled)
 
         note = QLabel(
-            'Usa o modelo público '
-            '<a href="https://huggingface.co/freevoid/speaker-diarization-3.1">'
-            "freevoid/speaker-diarization-3.1</a> — sem token necessário."
+            "Usa <b>simple-diarizer</b> com embeddings ECAPA-TDNN "
+            "(speechbrain/spkrec-ecapa-voxceleb) — sem token necessário."
         )
         note.setOpenExternalLinks(True)
         note.setWordWrap(True)
