@@ -7,6 +7,7 @@ from PySide6.QtCore import Qt, QTimer, QUrl
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 from PySide6.QtWidgets import (
     QDialog,
+    QFileDialog,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -16,28 +17,19 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSlider,
-    QTabWidget,
-    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 
 from ..config.settings import VALID_MODELS
 from ..persistence.database import (
-    delete_minutes,
     delete_session,
     get_db,
-    get_minutes,
     get_segments,
     list_sessions,
     replace_segments,
-    save_minutes,
-    update_minutes,
 )
-from ..summarization.engine import SummarizationEngine
 from .widgets.transcript_view import TranscriptView
-
-_MINUTES_MODEL = SummarizationEngine.DEFAULT_MODEL
 
 
 @dataclass
@@ -66,7 +58,6 @@ class HistoryWindow(QDialog):
         self._db_path = db_path
         self._sessions: list[dict] = []
         self._current_session: dict | None = None
-        self._current_minutes_id: int | None = None
 
         self._search_timer = QTimer(self)
         self._search_timer.setSingleShot(True)
@@ -79,7 +70,6 @@ class HistoryWindow(QDialog):
         self._audio_out.setVolume(1.0)
 
         self._retranscribe_worker = None
-        self._minutes_worker = None
 
         self._build_ui()
         self._connect_player()
@@ -111,6 +101,11 @@ class HistoryWindow(QDialog):
         self._retranscribe_btn.clicked.connect(self._on_retranscribe)
         left_layout.addWidget(self._retranscribe_btn)
 
+        self._export_btn = QPushButton("📄  Exportar TXT")
+        self._export_btn.setEnabled(False)
+        self._export_btn.clicked.connect(self._on_export)
+        left_layout.addWidget(self._export_btn)
+
         self._delete_btn = QPushButton("🗑  Excluir sessão")
         self._delete_btn.setEnabled(False)
         self._delete_btn.clicked.connect(self._on_delete)
@@ -123,17 +118,10 @@ class HistoryWindow(QDialog):
 
         root.addWidget(left)
 
-        # ── Right panel: tabs ─────────────────────────────────────────
-        self._tabs = QTabWidget()
-        root.addWidget(self._tabs, stretch=1)
-
-        self._tabs.addTab(self._build_transcript_tab(), "Transcrição")
-        self._tabs.addTab(self._build_minutes_tab(), "Ata")
-
-    def _build_transcript_tab(self) -> QWidget:
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-        layout.setContentsMargins(0, 4, 0, 0)
+        # ── Right panel: transcript ───────────────────────────────────
+        right = QWidget()
+        right_layout = QVBoxLayout(right)
+        right_layout.setContentsMargins(0, 4, 0, 0)
 
         # Player controls
         player_row = QHBoxLayout()
@@ -152,7 +140,7 @@ class HistoryWindow(QDialog):
         self._time_label.setFixedWidth(90)
         self._time_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         player_row.addWidget(self._time_label)
-        layout.addLayout(player_row)
+        right_layout.addLayout(player_row)
 
         # Search
         search_row = QHBoxLayout()
@@ -161,55 +149,13 @@ class HistoryWindow(QDialog):
         self._search_box.setPlaceholderText("Digite para filtrar…")
         self._search_box.textChanged.connect(self._search_timer.start)
         search_row.addWidget(self._search_box)
-        layout.addLayout(search_row)
+        right_layout.addLayout(search_row)
 
         self._transcript = TranscriptView()
         self._transcript.setPlaceholderText("Selecione uma sessão para ver a transcrição.")
-        layout.addWidget(self._transcript)
+        right_layout.addWidget(self._transcript)
 
-        return tab
-
-    def _build_minutes_tab(self) -> QWidget:
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-        layout.setContentsMargins(0, 4, 0, 0)
-
-        btn_row = QHBoxLayout()
-        self._generate_btn = QPushButton("✨  Gerar Ata")
-        self._generate_btn.setEnabled(False)
-        self._generate_btn.clicked.connect(self._on_generate_minutes)
-        btn_row.addWidget(self._generate_btn)
-
-        self._save_minutes_btn = QPushButton("💾  Salvar")
-        self._save_minutes_btn.setEnabled(False)
-        self._save_minutes_btn.clicked.connect(self._on_save_minutes)
-        btn_row.addWidget(self._save_minutes_btn)
-
-        self._delete_minutes_btn = QPushButton("🗑  Excluir Ata")
-        self._delete_minutes_btn.setEnabled(False)
-        self._delete_minutes_btn.clicked.connect(self._on_delete_minutes)
-        btn_row.addWidget(self._delete_minutes_btn)
-
-        btn_row.addStretch()
-        layout.addLayout(btn_row)
-
-        self._minutes_status = QLabel("")
-        self._minutes_status.setStyleSheet("color: #7f8c8d; font-size: 11px;")
-        layout.addWidget(self._minutes_status)
-
-        self._minutes_edit = QTextEdit()
-        self._minutes_edit.setPlaceholderText(
-            "A ata gerada aparecerá aqui. Você pode editá-la antes de salvar."
-        )
-        self._minutes_edit.setStyleSheet(
-            "QTextEdit {"
-            "  background-color: #1e2330; color: #dfe6e9;"
-            "  border: 1px solid #2d3561; border-radius: 6px; padding: 6px;"
-            "}"
-        )
-        layout.addWidget(self._minutes_edit)
-
-        return tab
+        root.addWidget(right, stretch=1)
 
     def _connect_player(self) -> None:
         self._player.positionChanged.connect(self._on_position_changed)
@@ -256,20 +202,18 @@ class HistoryWindow(QDialog):
         if not has_session:
             self._current_session = None
             self._retranscribe_btn.setEnabled(False)
-            self._generate_btn.setEnabled(False)
+            self._export_btn.setEnabled(False)
             return
 
         session = self._sessions[row]
         self._current_session = session
-        session_id = session["id"]
 
         has_audio = bool(session.get("merged_wav") and Path(session["merged_wav"]).exists())
         self._retranscribe_btn.setEnabled(has_audio)
-        self._generate_btn.setEnabled(True)
+        self._export_btn.setEnabled(True)
         self._action_status.setText("")
 
-        self._show_session(session_id)
-        self._load_minutes_for_session(session_id)
+        self._show_session(session["id"])
 
         if has_audio:
             self._player.setSource(QUrl.fromLocalFile(session["merged_wav"]))
@@ -304,28 +248,6 @@ class HistoryWindow(QDialog):
                 )
             )
 
-    def _load_minutes_for_session(self, session_id: int) -> None:
-        db = get_db(self._db_path)
-        try:
-            minutes = get_minutes(db, session_id)
-        finally:
-            db.close()
-
-        if minutes:
-            self._current_minutes_id = minutes["id"]
-            self._minutes_edit.setPlainText(minutes["content"])
-            self._minutes_status.setText(
-                f"Gerado em {minutes['created_at'][:16].replace('T',' ')} · {minutes['model_id']}"
-            )
-            self._save_minutes_btn.setEnabled(True)
-            self._delete_minutes_btn.setEnabled(True)
-        else:
-            self._current_minutes_id = None
-            self._minutes_edit.clear()
-            self._minutes_status.setText("")
-            self._save_minutes_btn.setEnabled(False)
-            self._delete_minutes_btn.setEnabled(False)
-
     def _apply_search(self) -> None:
         item = self._session_list.currentItem()
         if item is None:
@@ -355,11 +277,10 @@ class HistoryWindow(QDialog):
             db.close()
 
         self._transcript.clear_transcript()
-        self._minutes_edit.clear()
         self._load_sessions()
         self._delete_btn.setEnabled(False)
         self._retranscribe_btn.setEnabled(False)
-        self._generate_btn.setEnabled(False)
+        self._export_btn.setEnabled(False)
 
     # ------------------------------------------------------------------
     # Slots — retranscription
@@ -405,100 +326,58 @@ class HistoryWindow(QDialog):
 
         self._action_status.setText("Retranscrição concluída.")
         self._show_session(session_id)
-        self._load_sessions()  # refresh segment count
-
-    # ------------------------------------------------------------------
-    # Slots — meeting minutes
-    # ------------------------------------------------------------------
-
-    def _on_generate_minutes(self) -> None:
-        if self._current_session is None:
-            return
-
-        session_id = self._current_session["id"]
-        db = get_db(self._db_path)
-        try:
-            segments = get_segments(db, session_id)
-        finally:
-            db.close()
-
-        if not segments:
-            QMessageBox.information(self, "Ata", "Nenhum segmento de transcrição encontrado.")
-            return
-
-        from .workers.minutes_worker import MinutesWorker
-
-        self._set_busy(True)
-        self._minutes_status.setText(f"Gerando ata com '{_MINUTES_MODEL}'…")
-
-        self._minutes_worker = MinutesWorker(segments, _MINUTES_MODEL, parent=self)
-        self._minutes_worker.progress.connect(self._minutes_status.setText)
-        self._minutes_worker.finished.connect(self._on_minutes_generated)
-        self._minutes_worker.error.connect(self._on_action_error)
-        self._minutes_worker.start()
-
-    def _on_minutes_generated(self, text: str) -> None:
-        self._set_busy(False)
-        self._minutes_edit.setPlainText(text)
-        self._minutes_status.setText("Ata gerada — revise e clique em Salvar.")
-        self._save_minutes_btn.setEnabled(True)
-        self._tabs.setCurrentIndex(1)  # switch to Ata tab
-
-    def _on_save_minutes(self) -> None:
-        if self._current_session is None:
-            return
-        content = self._minutes_edit.toPlainText().strip()
-        if not content:
-            return
-
-        session_id = self._current_session["id"]
-        db = get_db(self._db_path)
-        try:
-            if self._current_minutes_id is not None:
-                update_minutes(db, self._current_minutes_id, content)
-            else:
-                self._current_minutes_id = save_minutes(db, session_id, content, _MINUTES_MODEL)
-        finally:
-            db.close()
-
-        self._minutes_status.setText("Ata salva.")
-        self._delete_minutes_btn.setEnabled(True)
-
-    def _on_delete_minutes(self) -> None:
-        if self._current_minutes_id is None:
-            return
-        reply = QMessageBox.question(
-            self,
-            "Excluir Ata",
-            "Remover a ata desta sessão?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
-            return
-
-        db = get_db(self._db_path)
-        try:
-            delete_minutes(db, self._current_minutes_id)
-        finally:
-            db.close()
-
-        self._current_minutes_id = None
-        self._minutes_edit.clear()
-        self._minutes_status.setText("")
-        self._save_minutes_btn.setEnabled(False)
-        self._delete_minutes_btn.setEnabled(False)
+        self._load_sessions()
 
     def _on_action_error(self, msg: str) -> None:
         self._set_busy(False)
         self._action_status.setText("Erro — veja detalhes abaixo.")
         QMessageBox.critical(self, "Erro", msg)
 
+    def _on_export(self) -> None:
+        if self._current_session is None:
+            return
+
+        session_id = self._current_session["id"]
+        db = get_db(self._db_path)
+        try:
+            rows = get_segments(db, session_id)
+        finally:
+            db.close()
+
+        if not rows:
+            QMessageBox.information(self, "Exportar", "Nenhum segmento de transcrição encontrado.")
+            return
+
+        started = self._current_session["started_at"].replace("T", "_").replace(":", "-")[:16]
+        default_name = f"transcricao_{started}.txt"
+
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Exportar transcrição", default_name, "Texto (*.txt)"
+        )
+        if not path:
+            return
+
+        lines = []
+        for r in rows:
+            start_s = r["start"]
+            end_s = r["end"]
+            m_s, s_s = divmod(int(start_s), 60)
+            m_e, s_e = divmod(int(end_s), 60)
+            timestamp = f"[{m_s:02d}:{s_s:02d} - {m_e:02d}:{s_e:02d}]"
+            speaker = f" {r['speaker']}" if r.get("speaker") else ""
+            source = f" ({r['source']})" if r.get("source") else ""
+            lines.append(f"{timestamp}{speaker}{source}  {r['text']}")
+
+        try:
+            Path(path).write_text("\n".join(lines), encoding="utf-8")
+            self._action_status.setText(f"Exportado: {Path(path).name}")
+        except OSError as exc:
+            QMessageBox.critical(self, "Erro ao exportar", str(exc))
+
     def _set_busy(self, busy: bool) -> None:
         self._retranscribe_btn.setEnabled(not busy)
-        self._generate_btn.setEnabled(not busy)
+        self._export_btn.setEnabled(not busy)
         self._delete_btn.setEnabled(not busy)
-        self._save_minutes_btn.setEnabled(not busy)
-        self._delete_minutes_btn.setEnabled(not busy)
 
     # ------------------------------------------------------------------
     # Slots — audio player

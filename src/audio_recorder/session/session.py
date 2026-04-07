@@ -12,15 +12,13 @@ from ..config.settings import Settings
 from ..merge.merger import Merger, MergedSegment
 from ..audio.mixer import mix_wav
 from ..persistence.database import get_db, save_session
-from ..transcription.segment import AudioSegment, TranscriptResult
-from ..vad.silero import VADWorker
-from ..transcription.pipeline import TranscriptionWorker
+from ..transcription.segment import TranscriptResult
 from .state import SessionState
 from .wav_writer import WavWriter
 
 logger = logging.getLogger(__name__)
 
-_QUEUE_RAW_SIZE = 200
+_QUEUE_WAV_SIZE = 200
 _SOURCE_FILES = ["microfone.wav", "sistema.wav", "microfone.offset", "sistema.offset"]
 
 
@@ -33,28 +31,24 @@ def _cleanup_source_files(output_dir: Path) -> None:
                 p.unlink()
         except OSError:
             logger.warning("Não foi possível remover %s", p)
-_QUEUE_WAV_SIZE = 200
-_QUEUE_SEG_SIZE = 50
 
 
 class RecordingSession:
     """
     Manages the full lifecycle of one recording session:
-      start() → RECORDING (all workers running)
-      stop()  → TRANSCRIBING (workers drain) → DONE
-      merge_and_save() → output files on disk
+      start() → RECORDING (capturers + wav writers running)
+      stop()  → DONE (wav files written to disk)
+      transcribe_recordings() → run Whisper on the saved wav files
+      merge_and_save() → merge + SQLite persistence
 
     Thread layout per channel (mic and system):
-      Capturer → [raw_q, wav_q]
-                    |         └─ WavWriter → <channel>.wav
-                    └─ VADWorker → segment_q → TranscriptionWorker → result_queue
+      Capturer → wav_q → WavWriter → <channel>.wav
     """
 
     def __init__(self, settings: Settings, output_dir: Path) -> None:
         self._settings = settings
         self._output_dir = output_dir
         self.state = SessionState.IDLE
-        self.result_queue: queue.Queue[TranscriptResult] = queue.Queue()
         self._stop_event = threading.Event()
         self._capturers: list[AudioCapturer] = []
         self._workers: list[threading.Thread] = []
@@ -71,14 +65,13 @@ class RecordingSession:
         self._output_dir.mkdir(parents=True, exist_ok=True)
         self._started_at = datetime.now().isoformat()
         cfg = AudioConfig(chunk_size=1024)
-        t = self._settings.transcription
 
         for source, wav_name, kwargs in [
             ("mic",    "microfone.wav", {"device_name": self._settings.capture.mic_device_name}),
             ("system", "sistema.wav",   {}),
         ]:
             capturer, workers = self._build_channel(
-                source, cfg, t.model, t.language,
+                source, cfg,
                 self._output_dir / wav_name, **kwargs,
             )
             self._capturers.append(capturer)
@@ -96,24 +89,37 @@ class RecordingSession:
         if self.state != SessionState.RECORDING:
             return
 
-        self.state = SessionState.TRANSCRIBING
-        logger.info("Parando gravação, aguardando workers...")
+        logger.info("Parando gravação, aguardando wav writers...")
 
-        # 1. Stop capturers first — cuts off data flow into the queues
         for c in self._capturers:
             c.stop()
 
-        # 2. Signal the remaining workers (WavWriter, VADWorker, TranscriptionWorker)
         self._stop_event.set()
 
-        # 3. Wait for workers to drain their queues
         for w in self._workers:
-            w.join(timeout=60)
+            w.join(timeout=30)
             if w.is_alive():
                 logger.warning("Worker '%s' não terminou no prazo.", w.name)
 
         self.state = SessionState.DONE
-        logger.info("Sessão concluída.")
+        logger.info("Gravação concluída, arquivos WAV prontos.")
+
+    def transcribe_recordings(self) -> list[TranscriptResult]:
+        """Transcribe the recorded WAV files using Whisper. Call after stop()."""
+        from ..transcription.engine import WhisperEngine
+
+        t = self._settings.transcription
+        engine = WhisperEngine(t.model, t.language)
+
+        results: list[TranscriptResult] = []
+        for source, wav_name in [("mic", "microfone.wav"), ("system", "sistema.wav")]:
+            wav_path = self._output_dir / wav_name
+            if wav_path.exists():
+                logger.info("Transcrevendo %s (%s)…", wav_name, source)
+                results.extend(engine.transcribe_file(wav_path, source))
+
+        results.sort(key=lambda r: r.start)
+        return results
 
     def merge_and_save(
         self,
@@ -128,7 +134,6 @@ class RecordingSession:
             mic_results, sys_results, diarization_segments
         )
 
-        # Mix audio channels into a single merged.wav
         merged_wav_str: str | None = None
         try:
             merged_path = self._output_dir / "merged.wav"
@@ -166,35 +171,19 @@ class RecordingSession:
         self,
         source: str,
         cfg: AudioConfig,
-        model: str,
-        language: str,
         wav_path: Path,
         device_name: str = "",
     ) -> tuple[AudioCapturer, list[threading.Thread]]:
         """Return (capturer, [worker_threads]) for one audio channel."""
-        raw_q: queue.Queue[AudioChunk] = queue.Queue(maxsize=_QUEUE_RAW_SIZE)
         wav_q: queue.Queue[AudioChunk] = queue.Queue(maxsize=_QUEUE_WAV_SIZE)
-        seg_q: queue.Queue[AudioSegment] = queue.Queue(maxsize=_QUEUE_SEG_SIZE)
-
-        t = self._settings.transcription
 
         if source == "mic":
-            capturer = get_mic_capturer([raw_q, wav_q], cfg, device_name=device_name)
+            capturer = get_mic_capturer([wav_q], cfg, device_name=device_name)
         else:
-            capturer = get_loopback_capturer([raw_q, wav_q], cfg)
+            capturer = get_loopback_capturer([wav_q], cfg)
 
         workers: list[threading.Thread] = [
             WavWriter(wav_path, wav_q, self._stop_event),
-            VADWorker(
-                raw_q, seg_q, self._stop_event,
-                source=source,
-                silence_ms=t.vad_silence_ms,
-                speech_pad_ms=t.vad_overlap_ms,
-            ),
-            TranscriptionWorker(
-                seg_q, self.result_queue, self._stop_event,
-                model_name=model, language=language, source=source,
-            ),
         ]
         return capturer, workers
 

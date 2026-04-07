@@ -47,6 +47,27 @@ class WhisperEngine:
         self._model = WhisperModel(model_name, device=device, compute_type=compute_type)
         self._language: str | None = None if language == "auto" else language
 
+    def transcribe_file(self, wav_path, source: str) -> list[TranscriptResult]:
+        """Transcribe a WAV file and return a list of TranscriptResults."""
+        segments, _ = self._model.transcribe(
+            str(wav_path),
+            language=self._language,
+            vad_filter=True,
+            word_timestamps=False,
+        )
+        results = []
+        for seg in segments:
+            text = seg.text.strip()
+            if not text:
+                continue
+            results.append(TranscriptResult(
+                text=text,
+                start=seg.start,
+                end=seg.end,
+                source=source,
+            ))
+        return results
+
     def transcribe(self, segment: AudioSegment) -> list[TranscriptResult]:
         """Transcribe a single AudioSegment and return a list of TranscriptResults."""
         audio = _prepare_audio(segment)

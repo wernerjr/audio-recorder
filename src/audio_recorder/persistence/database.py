@@ -9,12 +9,9 @@ _DDL = """
 PRAGMA journal_mode=WAL;
 PRAGMA foreign_keys=ON;
 
-CREATE TABLE IF NOT EXISTS meeting_minutes (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id INTEGER NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-    content    TEXT    NOT NULL,
-    created_at TEXT    NOT NULL,
-    model_id   TEXT    NOT NULL
+CREATE TABLE IF NOT EXISTS settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
@@ -69,7 +66,6 @@ def _apply_migrations(db: sqlite3.Connection) -> None:
     if "merged_wav" not in cols:
         db.execute("ALTER TABLE sessions ADD COLUMN merged_wav TEXT")
         db.commit()
-    # meeting_minutes is created via _DDL with IF NOT EXISTS — no ALTER needed
 
 
 def save_session(
@@ -179,42 +175,19 @@ def replace_segments(
 
 
 # ---------------------------------------------------------------------------
-# Meeting minutes
+# Settings
 # ---------------------------------------------------------------------------
 
-def save_minutes(
-    db: sqlite3.Connection,
-    session_id: int,
-    content: str,
-    model_id: str,
-) -> int:
-    """Insert a new meeting minutes record and return its id."""
-    from datetime import datetime
-    cur = db.execute(
-        "INSERT INTO meeting_minutes (session_id, content, created_at, model_id) VALUES (?,?,?,?)",
-        (session_id, content, datetime.now().isoformat(), model_id),
+def save_settings(db: sqlite3.Connection, data: dict[str, str]) -> None:
+    """Persist all settings as key/value pairs (upsert)."""
+    db.executemany(
+        "INSERT INTO settings (key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        list(data.items()),
     )
     db.commit()
-    return cur.lastrowid
 
 
-def get_minutes(db: sqlite3.Connection, session_id: int) -> dict | None:
-    """Return the latest minutes for *session_id*, or None if absent."""
-    row = db.execute(
-        "SELECT id, content, created_at, model_id FROM meeting_minutes "
-        "WHERE session_id=? ORDER BY created_at DESC LIMIT 1",
-        (session_id,),
-    ).fetchone()
-    return dict(row) if row else None
-
-
-def update_minutes(db: sqlite3.Connection, minutes_id: int, content: str) -> None:
-    """Overwrite the text of an existing minutes record."""
-    db.execute("UPDATE meeting_minutes SET content=? WHERE id=?", (content, minutes_id))
-    db.commit()
-
-
-def delete_minutes(db: sqlite3.Connection, minutes_id: int) -> None:
-    """Delete a minutes record."""
-    db.execute("DELETE FROM meeting_minutes WHERE id=?", (minutes_id,))
-    db.commit()
+def load_settings_from_db(db: sqlite3.Connection) -> dict[str, str]:
+    """Load all settings key/value pairs, or empty dict if none saved."""
+    rows = db.execute("SELECT key, value FROM settings").fetchall()
+    return {row["key"]: row["value"] for row in rows}

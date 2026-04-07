@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import queue
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QThread, QTimer, Signal
+from PySide6.QtCore import QThread, QTimer, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -15,43 +14,34 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ..config.settings import Settings, load_settings
+from ..config.settings import Settings, load_settings, settings_from_dict, settings_to_dict
+from ..persistence.database import get_db, load_settings_from_db, save_settings
 from ..session.session import RecordingSession, session_output_dir
-from ..transcription.segment import TranscriptResult
-from .widgets.transcript_view import TranscriptView
 from .widgets.waveform import RecordingIndicator
 
 _CONFIG_PATH = Path("config.toml")
+_DEFAULT_DB_PATH = Path("recordings/history.db")
 
 
 class _StopWorker(QThread):
-    """Runs session.stop() + merge_and_save() in a background thread."""
+    """Runs session.stop() + transcribe_recordings() + merge_and_save() in background."""
 
-    finished = Signal()
+    progress = Signal(str)
+    finished = Signal(list)
     failed = Signal(str)
 
-    def __init__(
-        self,
-        session: RecordingSession,
-        results: list[TranscriptResult],
-        diarization_settings,
-    ) -> None:
+    def __init__(self, session: RecordingSession, diarization_settings) -> None:
         super().__init__()
         self._session = session
-        self._results = list(results)
         self._diar = diarization_settings
 
     def run(self) -> None:
         try:
+            self.progress.emit("Encerrando gravação…")
             self._session.stop()
 
-            # Drain any remaining results produced during shutdown
-            while True:
-                try:
-                    r = self._session.result_queue.get_nowait()
-                    self._results.append(r)
-                except queue.Empty:
-                    break
+            self.progress.emit("Transcrevendo… (pode demorar alguns instantes)")
+            results = self._session.transcribe_recordings()
 
             diar_segments = None
             if self._diar.enabled:
@@ -60,6 +50,7 @@ class _StopWorker(QThread):
                     engine = DiarizationEngine()
                     mic_wav = self._session._output_dir / "microfone.wav"
                     if mic_wav.exists():
+                        self.progress.emit("Identificando falantes…")
                         diar_segments = engine.diarize(mic_wav)
                 except Exception as diar_exc:
                     import logging
@@ -67,8 +58,9 @@ class _StopWorker(QThread):
                         "Diarização falhou (sessão salva sem labels de speaker): %s", diar_exc
                     )
 
-            self._session.merge_and_save(self._results, diar_segments)
-            self.finished.emit()
+            self.progress.emit("Salvando sessão…")
+            self._session.merge_and_save(results, diar_segments)
+            self.finished.emit(results)
 
         except Exception as exc:
             import traceback
@@ -81,7 +73,6 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self._session: RecordingSession | None = None
-        self._results: list[TranscriptResult] = []
         self._elapsed: int = 0
         self._settings: Settings = self._load_settings()
         self._stop_worker: _StopWorker | None = None
@@ -95,7 +86,7 @@ class MainWindow(QMainWindow):
 
     def _build_ui(self) -> None:
         self.setWindowTitle("Audio Recorder")
-        self.setMinimumSize(760, 540)
+        self.setMinimumSize(480, 260)
         self.setStyleSheet(
             "QMainWindow, QWidget { background-color: #141922; color: #dfe6e9; }"
             "QPushButton {"
@@ -139,11 +130,7 @@ class MainWindow(QMainWindow):
 
         # ── Recording indicator ─────────────────────────────────────────
         self._indicator = RecordingIndicator()
-        root.addWidget(self._indicator)
-
-        # ── Transcript view ─────────────────────────────────────────────
-        self._transcript = TranscriptView()
-        root.addWidget(self._transcript, stretch=1)
+        root.addWidget(self._indicator, stretch=1)
 
         # ── Controls ────────────────────────────────────────────────────
         controls = QHBoxLayout()
@@ -161,10 +148,6 @@ class MainWindow(QMainWindow):
         root.addLayout(controls)
 
     def _build_timers(self) -> None:
-        self._poll_timer = QTimer(self)
-        self._poll_timer.setInterval(50)
-        self._poll_timer.timeout.connect(self._drain_results)
-
         self._elapsed_timer = QTimer(self)
         self._elapsed_timer.setInterval(1000)
         self._elapsed_timer.timeout.connect(self._tick_elapsed)
@@ -182,7 +165,6 @@ class MainWindow(QMainWindow):
     def _start_recording(self) -> None:
         output_dir = session_output_dir(self._settings.output.directory)
         self._session = RecordingSession(self._settings, output_dir)
-        self._results = []
         self._elapsed = 0
 
         try:
@@ -195,7 +177,6 @@ class MainWindow(QMainWindow):
             )
             return
 
-        self._poll_timer.start()
         self._elapsed_timer.start()
         self._indicator.set_recording(True)
         self._record_btn.setText("■  Parar")
@@ -206,24 +187,22 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(str(output_dir))
 
     def _stop_recording(self) -> None:
-        self._poll_timer.stop()
         self._elapsed_timer.stop()
         self._record_btn.setEnabled(False)
         self._indicator.set_recording(False)
-        self._status_lbl.setText("Encerrando workers e gerando transcrição…")
+        self._status_lbl.setText("Encerrando gravação…")
 
         self._stop_worker = _StopWorker(
-            self._session,       # type: ignore[arg-type]
-            self._results,
+            self._session,  # type: ignore[arg-type]
             self._settings.diarization,
         )
-        self._stop_worker.finished.connect(lambda: self._on_stop_finished())
+        self._stop_worker.progress.connect(self._status_lbl.setText)
+        self._stop_worker.finished.connect(self._on_stop_finished)
         self._stop_worker.failed.connect(self._on_stop_failed)
         self._stop_worker.start()
 
-    def _on_stop_finished(self) -> None:
+    def _on_stop_finished(self, results: list) -> None:
         self._session = None
-        self._drain_results()  # final flush
         self._record_btn.setEnabled(True)
         self._record_btn.setText("⬤  Gravar")
         self._record_btn.setProperty("recording", "false")
@@ -243,17 +222,6 @@ class MainWindow(QMainWindow):
     # Periodic callbacks
     # ------------------------------------------------------------------
 
-    def _drain_results(self) -> None:
-        if self._session is None:
-            return
-        for _ in range(20):  # max 20 per tick to keep UI responsive
-            try:
-                result = self._session.result_queue.get_nowait()
-                self._results.append(result)
-                self._transcript.append_result(result)
-            except queue.Empty:
-                break
-
     def _tick_elapsed(self) -> None:
         self._elapsed += 1
         m, s = divmod(self._elapsed, 60)
@@ -268,9 +236,9 @@ class MainWindow(QMainWindow):
         win = SettingsWindow(self._settings, parent=self)
         if win.exec():
             self._settings = win.get_settings()
+            self._save_settings_to_db(self._settings)
 
     def _open_history(self) -> None:
-        from pathlib import Path
         from .history_window import HistoryWindow
         db_path = (
             Path(self._settings.output.db_path)
@@ -280,9 +248,36 @@ class MainWindow(QMainWindow):
         HistoryWindow(db_path, parent=self).exec()
 
     def _load_settings(self) -> Settings:
+        # Try loading from SQLite first
+        if _DEFAULT_DB_PATH.exists():
+            try:
+                db = get_db(_DEFAULT_DB_PATH)
+                data = load_settings_from_db(db)
+                db.close()
+                if data:
+                    base = load_settings(_CONFIG_PATH if _CONFIG_PATH.exists() else None)
+                    return settings_from_dict(data, base)
+            except Exception:
+                pass
+
+        # Fallback to TOML / defaults
         config_path = _CONFIG_PATH if _CONFIG_PATH.exists() else None
         try:
             return load_settings(config_path)
         except ValueError as exc:
             QMessageBox.warning(None, "Configuração inválida", str(exc))  # type: ignore[call-overload]
             return load_settings(None)
+
+    def _save_settings_to_db(self, settings: Settings) -> None:
+        db_path = (
+            Path(settings.output.db_path)
+            if settings.output.db_path
+            else Path(settings.output.directory) / "history.db"
+        )
+        try:
+            db = get_db(db_path)
+            save_settings(db, settings_to_dict(settings))
+            db.close()
+        except Exception:
+            import logging
+            logging.getLogger(__name__).warning("Falha ao salvar configurações no SQLite.")

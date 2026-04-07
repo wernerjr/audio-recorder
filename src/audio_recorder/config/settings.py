@@ -95,3 +95,45 @@ def _validate(s: Settings) -> None:
 
     if s.diarization.enabled:
         logger.debug("Diarização ativada com modelo público freevoid/speaker-diarization-3.1.")
+
+
+def settings_to_dict(s: Settings) -> dict[str, str]:
+    """Serialize Settings to a flat key/value dict for SQLite storage."""
+    return {
+        "capture.mic_device_name": s.capture.mic_device_name,
+        "capture.chunk_size": str(s.capture.chunk_size),
+        "transcription.model": s.transcription.model,
+        "transcription.language": s.transcription.language,
+        "transcription.vad_silence_ms": str(s.transcription.vad_silence_ms),
+        "transcription.vad_overlap_ms": str(s.transcription.vad_overlap_ms),
+        "output.directory": s.output.directory,
+        "output.db_path": s.output.db_path,
+        "diarization.enabled": "1" if s.diarization.enabled else "0",
+        "diarization.token": s.diarization.token,
+    }
+
+
+def settings_from_dict(d: dict[str, str], base: Settings | None = None) -> Settings:
+    """Deserialize a flat key/value dict (from SQLite) back into a Settings object."""
+    s = base or Settings()
+    if "capture.mic_device_name" in d:
+        s.capture.mic_device_name = d["capture.mic_device_name"]
+    if "capture.chunk_size" in d:
+        s.capture.chunk_size = int(d["capture.chunk_size"])
+    if "transcription.model" in d:
+        s.transcription.model = d["transcription.model"]
+    if "transcription.language" in d:
+        s.transcription.language = d["transcription.language"]
+    if "transcription.vad_silence_ms" in d:
+        s.transcription.vad_silence_ms = int(d["transcription.vad_silence_ms"])
+    if "transcription.vad_overlap_ms" in d:
+        s.transcription.vad_overlap_ms = int(d["transcription.vad_overlap_ms"])
+    if "output.directory" in d:
+        s.output.directory = d["output.directory"]
+    if "output.db_path" in d:
+        s.output.db_path = d["output.db_path"]
+    if "diarization.enabled" in d:
+        s.diarization.enabled = d["diarization.enabled"] == "1"
+    if "diarization.token" in d:
+        s.diarization.token = d["diarization.token"]
+    return s
